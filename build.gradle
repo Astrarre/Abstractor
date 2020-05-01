@@ -1,0 +1,22 @@
+plugins {
+    id 'java'
+}
+
+group 'org.example'
+version '1.0-SNAPSHOT'
+
+sourceCompatibility = 1.8
+
+repositories {
+    mavenCentral()
+    maven {
+        url = 'https://raw.githubusercontent.com/Devan-Kerman/Devan-Repo/master/'
+    }
+}
+
+dependencies {
+    // https://mvnrepository.com/artifact/org.ow2.asm/asm-tree
+    compile group: 'org.ow2.asm', name: 'asm-tree', version: '8.0.1'
+    // devlib
+    compile group: 'net.devtech', name: 'dev-lib', version: '1.1'
+}
