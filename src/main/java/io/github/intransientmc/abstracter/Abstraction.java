@@ -7,43 +7,76 @@ import io.github.intransientmc.abstracter.schema.Cls;
 import io.github.intransientmc.abstracter.schema.Field;
 import io.github.intransientmc.abstracter.schema.Method;
 import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.Type;
-import java.io.BufferedReader;
-import java.io.File;
-import java.io.FileReader;
-import java.io.IOException;
+import java.io.*;
 import java.lang.reflect.Modifier;
-import java.util.Arrays;
-import java.util.Collection;
+import java.util.*;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 public class Abstraction implements Opcodes {
-	private final static class Json {
-		public Cls[] classes;
-		private String information;
-	}
-
+	private static final String OBJECT_TYPE = Type.getInternalName(Object.class);
 	public static final String EXPOSE_TYPE = "io/github/intransientmc/jarstripper/annotations/Strip";
+
+	public static final Set<String> CLASSES = new HashSet<>();
 
 	public static void main(String[] args) throws IOException {
 		File file = new File(args[0]);
 		Gson gson = new Gson();
 		BufferedReader reader = new BufferedReader(new FileReader(file));
-		Json json = gson.fromJson(reader, Json.class);
+		Cls[] classes = gson.fromJson(reader, Cls[].class);
 		reader.close();
-		System.out.println("Information: " + json.information);
-		Cls[] classes = json.classes;
-		for (Cls cls : classes) {
-
+		for (Cls aClass : classes) {
+			CLASSES.add(aClass.yarnName.substring(1, aClass.yarnName.length()-1));
 		}
+		Map<String, ClassWriter> writers = new HashMap<>();
+		for (Cls cls : classes) {
+			String name = cls.yarnName.substring(1, cls.yarnName.length()-1);
+			ClassWriter interfaceWriter = make(cls, ACC_PUBLIC | ACC_FINAL | ACC_INTERFACE, interfaceName(name), OBJECT_TYPE);
+			int written = absInterfaceField(interfaceWriter, cls.fields);
+			written += absInterfaceMethod(interfaceWriter, cls.methods);
+			if(written > 0)
+				writers.put(interfaceName(name), interfaceWriter);
+
+			String supername = OBJECT_TYPE;
+			if(!cls.parents.isEmpty())
+				supername = cls.parents.stream().findFirst().get();
+			ClassWriter baseWriter = make(cls, ACC_PUBLIC | (cls.access & ACC_ABSTRACT), baseName(name), supername);
+			int written2 = absBaseFields(baseWriter, cls.fields);
+			written2 += absBaseMethods(cls, baseWriter, cls.methods);
+			if(written2 > 0)
+				writers.put(baseName(name), baseWriter);
+		}
+
+		ZipOutputStream out = new ZipOutputStream(new FileOutputStream(args[1]));
+		for (Map.Entry<String, ClassWriter> entry : writers.entrySet()) {
+			String key = entry.getKey();
+			out.putNextEntry(new ZipEntry(key+".class"));
+			ClassWriter writer = entry.getValue();
+			out.write(writer.toByteArray());
+			out.closeEntry();
+		}
+		out.close();
+	}
+
+	private static ClassWriter make(Cls cls, int access, String name, String uppser) {
+		ClassWriter writer = new ClassWriter(0);
+		List<String> list = new ArrayList<>(cls.interfaces);
+		for (int i = 0; i < list.size(); i++) {
+			list.set(i, interfaceName(list.get(i)));
+		}
+		writer.visit(V1_8, access, name, null, uppser, list.toArray(new String[0]));
+		return writer;
 	}
 
 	private static int absInterfaceMethod(ClassVisitor visitor, Collection<Method> methods) {
 		int count = 0;
 		for (Method method : methods) {
-			if (method.is_invoker_exposed) {
+			if (method.invokable_interface) {
 				count++;
-				InterfaceEmitter.emitInvoker(visitor, method.yarnName, abstractMethodDesc('('+String.join("", Arrays.asList(method.yarnParameterTypes))+')'+method.yarnReturnType), Modifier.isStatic(method.access));
+				InterfaceEmitter.emitInvoker(visitor, method.yarnName, abstractMethodDesc('(' + String.join("", Arrays.asList(method.yarnParameterTypes)) + ')' + method.yarnReturnType), Modifier.isStatic(method.access));
 			}
 		}
 		return count;
@@ -52,11 +85,11 @@ public class Abstraction implements Opcodes {
 	private static int absInterfaceField(ClassVisitor visitor, Collection<Field> fields) {
 		int count = 0;
 		for (Field field : fields) {
-			if(field.is_getter_exposed) {
+			if (field.getter_interface) {
 				count++;
 				InterfaceEmitter.emitGetter(visitor, field.yarnName, field.yarnType, Modifier.isStatic(field.access));
 			}
-			if(field.is_setter_exposed) {
+			if (field.setter_interface) {
 				count++;
 				InterfaceEmitter.emitSetter(visitor, field.yarnName, field.yarnType, Modifier.isStatic(field.access));
 			}
@@ -67,10 +100,12 @@ public class Abstraction implements Opcodes {
 	private static int absBaseMethods(Cls cls, ClassVisitor visitor, Collection<Method> methods) {
 		int count = 0;
 		for (Method method : methods) {
-			if (method.is_invoker_implemented) {
+			if (method.extensible || method.invokable_impl) {
 				count++;
 				String desc = '(' + String.join("", Arrays.asList(method.yarnParameterTypes)) + ')' + method.yarnReturnType;
-				BaseEmitter.emitAbstractedMethod(visitor, method.yarnOwner, method.yarnName, abstractMethodDesc(desc), desc, Modifier.isStatic(method.access), Modifier.isFinal(method.access), method.is_invoker_exposed, Modifier.isInterface(cls.access));
+				if (method.extensible)
+					BaseEmitter.emitExtensible(visitor, method.yarnOwner, baseName(method.yarnName), method.yarnName, abstractMethodDesc(desc), desc, Modifier.isStatic(method.access), method.invokable_interface, Modifier.isInterface(cls.access));
+				else BaseEmitter.emitInvoker(visitor, method.yarnOwner, method.yarnName, abstractMethodDesc(desc), desc, Modifier.isStatic(method.access), Modifier.isFinal(method.access), method.invokable_interface, Modifier.isInterface(cls.access));
 			}
 		}
 		return count;
@@ -79,13 +114,13 @@ public class Abstraction implements Opcodes {
 	private static int absBaseFields(ClassVisitor visitor, Collection<Field> fields) {
 		int count = 0;
 		for (Field field : fields) {
-			if(field.is_getter_exposed) {
+			if (field.getter_impl) {
 				count++;
-				InterfaceEmitter.emitGetter(visitor, field.yarnName, field.yarnType, Modifier.isStatic(field.access));
+				BaseEmitter.emitGetter(visitor, field.yarnName, field.name, field.yarnType, interfaceName(field.yarnType), Modifier.isStatic(field.access), field.getter_interface);
 			}
-			if(field.is_setter_exposed) {
+			if (field.setter_impl) {
 				count++;
-				InterfaceEmitter.emitSetter(visitor, field.yarnName, field.yarnType, Modifier.isStatic(field.access));
+				BaseEmitter.emitGetter(visitor, field.yarnName, field.name, field.yarnType, interfaceName(field.yarnType), Modifier.isStatic(field.access), field.setter_interface);
 			}
 		}
 		return count;
@@ -94,12 +129,18 @@ public class Abstraction implements Opcodes {
 
 	// todo allow custom handling for names
 	public static String interfaceName(String name) {
-		int last = Math.max(0, name.lastIndexOf('/')) + 1;
-		return name.substring(0, last) + 'I' + name.substring(last);
+		if(CLASSES.contains(name)) {
+			int last = Math.max(0, name.lastIndexOf('/')) + 1;
+			return name.substring(0, last) + 'I' + name.substring(last);
+		}
+		return name;
 	}
 
 	public static String baseName(String name) {
-		return name + "Base";
+		if(CLASSES.contains(name)) {
+			return name + "Base";
+		}
+		return name;
 	}
 
 	public static String abstractMethodDesc(String strDesc) {

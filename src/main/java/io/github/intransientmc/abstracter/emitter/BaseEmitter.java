@@ -9,8 +9,8 @@ import static io.github.intransientmc.abstracter.Abstraction.EXPOSE_TYPE;
 import static io.github.intransientmc.abstracter.util.Util.capitalizeFirstCharacter;
 
 public class BaseEmitter implements Opcodes {
-	public static void emitAbstractedMethod(ClassVisitor writer, String superClassName, String abstractClassName, String name, String abstractDesc, String vanillaDesc, boolean isStatic, boolean finalize, boolean exposed, boolean inter) {
-		emitBridgeMethod(writer, abstractClassName, name, abstractDesc, vanillaDesc, isStatic, inter);
+	public static void emitInvoker(ClassVisitor writer, String superClassName, String name, String abstractDesc, String vanillaDesc, boolean isStatic, boolean finalize, boolean exposed, boolean inter) {
+		// super caller, the implementation method / method to call
 		int access = 0;
 		if (exposed | inter) access |= ACC_PUBLIC;
 		else access |= ACC_PROTECTED;
@@ -20,7 +20,13 @@ public class BaseEmitter implements Opcodes {
 		createCall(visitor, superClassName, name, vanillaDesc, inter, INVOKESPECIAL);
 	}
 
+	public static void emitExtensible(ClassVisitor writer, String superClassName, String abstractClassName, String name, String abstractDesc, String vanillaDesc, boolean isStatic, boolean exposed, boolean inter) {
+		emitInvoker(writer, superClassName, name, abstractDesc, vanillaDesc, isStatic, false, exposed, inter);
+		emitBridgeMethod(writer, abstractClassName, name, abstractDesc, vanillaDesc, isStatic, inter);
+	}
+
 	public static void emitBridgeMethod(ClassVisitor cls, String abstractClassName, String name, String abstractDesc, String vanillaDesc, boolean isStatic, boolean inter) {
+		// override manager, calls the invoker
 		int acc = ACC_PUBLIC | ACC_FINAL;
 		if (isStatic) acc |= ACC_STATIC;
 		MethodVisitor visitor = cls.visitMethod(acc, name, vanillaDesc, null, null);
@@ -68,7 +74,7 @@ public class BaseEmitter implements Opcodes {
 		if (inter) insn = INVOKEINTERFACE;
 		visitor.visitCode();
 
-		Type type = Type.getObjectType(desc);
+		Type type = Type.getMethodType(desc); // method type
 		Type[] types = type.getArgumentTypes();
 		for (int i = 0, length = types.length; i < length; i++) {
 			Type arg = types[i];
