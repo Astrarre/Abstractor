@@ -40,14 +40,12 @@ public class Abstraction implements Opcodes {
 			if(written > 0)
 				writers.put(interfaceName(name), interfaceWriter);
 
-			String supername = OBJECT_TYPE;
-			if(!cls.parents.isEmpty())
-				supername = cls.parents.stream().findFirst().get();
-			ClassWriter baseWriter = make(cls, ACC_PUBLIC | (cls.access & ACC_ABSTRACT), baseName(name), supername);
-			int written2 = absBaseFields(baseWriter, cls.fields);
-			written2 += absBaseMethods(cls, baseWriter, cls.methods);
-			if(written2 > 0)
-				writers.put(baseName(name), baseWriter);
+			if(!cls.interfaceOnly) {
+				ClassWriter baseWriter = make(cls, ACC_PUBLIC | (cls.access & ACC_ABSTRACT), baseName(name), name);
+				int written2 = absBaseFields(baseWriter, cls, cls.fields);
+				written2 += absBaseMethods(cls, baseWriter, cls.methods);
+				if (written2 > 0) writers.put(baseName(name), baseWriter);
+			}
 		}
 
 		ZipOutputStream out = new ZipOutputStream(new FileOutputStream(args[1]));
@@ -111,16 +109,16 @@ public class Abstraction implements Opcodes {
 		return count;
 	}
 
-	private static int absBaseFields(ClassVisitor visitor, Collection<Field> fields) {
+	private static int absBaseFields(ClassVisitor visitor, Cls cls, Collection<Field> fields) {
 		int count = 0;
 		for (Field field : fields) {
 			if (field.getter_impl) {
 				count++;
-				BaseEmitter.emitGetter(visitor, field.yarnName, field.name, field.yarnType, interfaceName(field.yarnType), Modifier.isStatic(field.access), field.getter_interface);
+				BaseEmitter.emitGetter(visitor, cls.yarnName, field.name, field.yarnType, interfaceName(field.yarnType), Modifier.isStatic(field.access), field.getter_interface);
 			}
 			if (field.setter_impl) {
 				count++;
-				BaseEmitter.emitGetter(visitor, field.yarnName, field.name, field.yarnType, interfaceName(field.yarnType), Modifier.isStatic(field.access), field.setter_interface);
+				BaseEmitter.emitGetter(visitor, cls.yarnName, field.name, field.yarnType, interfaceName(field.yarnType), Modifier.isStatic(field.access), field.setter_interface);
 			}
 		}
 		return count;
